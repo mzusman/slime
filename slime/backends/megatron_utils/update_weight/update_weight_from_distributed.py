@@ -124,7 +124,7 @@ class UpdateWeightFromDistributed:
 
         if dist.get_rank() == 0:
             # int4/fp4 post_process
-            if self.quantization_config and self.quantization_config["quant_method"] in ["compressed-tensors"]:
+            if self.quantization_config and self.quantization_config["quant_method"] in ["compressed-tensors", "modelopt"]:
                 post_process_weights(
                     restore_weights_before_load=False,
                     post_process_quantization=True,

@@ -1,8 +1,9 @@
 from .padding_remover import remove_padding
 from .quantizer_compressed_tensors import quantize_params_compressed_tensors
 from .quantizer_fp8 import quantize_params_fp8
+from .quantizer_modelopt_nvfp4 import quantize_params_modelopt_nvfp4
 
-__all__ = ["remove_padding", "quantize_param", "quantize_params_fp8", "quantize_params_compressed_tensors"]
+__all__ = ["remove_padding", "quantize_param", "quantize_params_fp8", "quantize_params_compressed_tensors", "quantize_params_modelopt_nvfp4"]
 
 
 def quantize_params(args, megatron_name, converted_named_params, quantization_config):
@@ -13,6 +14,10 @@ def quantize_params(args, megatron_name, converted_named_params, quantization_co
     elif quantization_config["quant_method"] == "compressed-tensors":
         # only int4 at the moment.
         return quantize_params_compressed_tensors(converted_named_params, quantization_config)
+    elif quantization_config["quant_method"] == "modelopt":
+        # NVFP4 W4A4 (online RL weight-sync). input_scale (activation stat) is
+        # carried from the init checkpoint, not recomputed — see the quantizer.
+        return quantize_params_modelopt_nvfp4(args, converted_named_params, quantization_config)
     else:
         # Unknown quant method (e.g. mxfp4) — pass through BF16 params as-is
         return converted_named_params
