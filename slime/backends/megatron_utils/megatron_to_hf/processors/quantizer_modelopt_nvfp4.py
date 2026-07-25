@@ -125,11 +125,16 @@ def quantize_params_modelopt_nvfp4(args, converted_named_params, quantization_co
             out.append((name, param))  # attention/router/head/norms -> bf16 verbatim
             continue
         base = name[: -len(".weight")]
+        # The sync buckets+torch.cats a linear's tensors together, so they must share a
+        # device. Pin everything to the source weight's device: the packed weight/scales
+        # follow the CUDA param, but .input_scale comes off disk on CPU (static activation
+        # stat), so it has to be moved explicitly.
+        dev = param.device
         packed, scale, gscale = _quantize_weight_nvfp4(param.to(torch.bfloat16))
-        out.append((base + ".weight", packed))
-        out.append((base + ".weight_scale", scale))
-        out.append((base + ".weight_scale_2", gscale))
-        # activation global scale: carry the init checkpoint's value (static), else 1.0
+        out.append((base + ".weight", packed.to(dev)))
+        out.append((base + ".weight_scale", scale.to(dev)))
+        out.append((base + ".weight_scale_2", gscale.to(dev)))
         isc = input_scales.get(base + ".input_scale")
-        out.append((base + ".input_scale", isc if isc is not None else torch.tensor(1.0, dtype=torch.float32)))
+        isc = isc.to(dev) if isc is not None else torch.tensor(1.0, dtype=torch.float32, device=dev)
+        out.append((base + ".input_scale", isc))
     return out
