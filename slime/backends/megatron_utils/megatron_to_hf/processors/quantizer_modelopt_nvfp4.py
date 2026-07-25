@@ -24,7 +24,6 @@ round-trip (serve slime-quantized weights, diff logits vs the modelopt checkpoin
 
 import glob
 import os
-import re
 
 import torch
 
@@ -37,10 +36,12 @@ _E2M1 = torch.tensor([0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0])
 # round-to-nearest thresholds (midpoints between consecutive ladder values)
 _E2M1_THRESH = ((_E2M1[1:] + _E2M1[:-1]) / 2.0)  # 7 boundaries
 
-# modelopt exclude: attention (MLA/DSA), router gate, lm_head, embeddings stay bf16.
-_QUANT_RE = re.compile(r"\.mlp\.(experts\.\d+|shared_experts)\.(gate|up|down)_proj\.weight$")
-
-_INPUT_SCALE_CACHE = {}
+# Which weights to quantize is read from the init checkpoint itself (a weight is
+# nvfp4 iff the ckpt ships its `.weight_scale`), NOT a name pattern: modelopt
+# quantizes every mlp linear incl. the DENSE (pre-MoE) layers' gate/up/down_proj,
+# which a routed/shared-experts-only regex misses -> those got sent bf16 (unpacked)
+# and blew up sglang's packed-param load_merged_column_weight shape assert.
+_QUANT_META_CACHE = {}
 
 
 def _e2m1_codes(x):
@@ -91,29 +92,36 @@ def _quantize_weight_nvfp4(w_bf16):
     return packed, scale, gscale.reshape(())
 
 
-def _load_init_input_scales(hf_ckpt_dir):
-    """Load per-linear .input_scale (activation global scale) from the init nvfp4
-    checkpoint once; these are held static across RL steps."""
-    if hf_ckpt_dir in _INPUT_SCALE_CACHE:
-        return _INPUT_SCALE_CACHE[hf_ckpt_dir]
+def _load_init_quant_meta(hf_ckpt_dir):
+    """Scan the init nvfp4 checkpoint once for (input_scales, quant_bases):
+      input_scales : {"<base>.input_scale": tensor} — static activation global scale,
+                     held constant across RL steps (W4A4 stat, not weight-derived).
+      quant_bases  : {"<base>"} for every weight the ckpt quantized, i.e. shipping a
+                     "<base>.weight_scale". This is the ground truth for which linears
+                     sglang created packed nvfp4 params for; we quantize exactly these."""
+    if hf_ckpt_dir in _QUANT_META_CACHE:
+        return _QUANT_META_CACHE[hf_ckpt_dir]
     from safetensors import safe_open
 
-    scales = {}
+    input_scales, quant_bases = {}, set()
     for f in glob.glob(os.path.join(hf_ckpt_dir, "*.safetensors")):
         with safe_open(f, framework="pt") as h:
             for k in h.keys():
                 if k.endswith(".input_scale"):
-                    scales[k] = h.get_tensor(k)
-    _INPUT_SCALE_CACHE[hf_ckpt_dir] = scales
-    return scales
+                    input_scales[k] = h.get_tensor(k)
+                elif k.endswith(".weight_scale"):  # not .weight_scale_2 (per-tensor global)
+                    quant_bases.add(k[: -len(".weight_scale")])
+    _QUANT_META_CACHE[hf_ckpt_dir] = (input_scales, quant_bases)
+    return input_scales, quant_bases
 
 
 def quantize_params_modelopt_nvfp4(args, converted_named_params, quantization_config):
     hf_dir = getattr(args, "hf_checkpoint", None) or getattr(args, "ref_load", None)
-    input_scales = _load_init_input_scales(hf_dir) if hf_dir else {}
+    input_scales, quant_bases = _load_init_quant_meta(hf_dir) if hf_dir else ({}, set())
     out = []
     for name, param in converted_named_params:
-        if not _QUANT_RE.search(name):
+        # quantize iff the init ckpt quantized this exact weight (has a .weight_scale)
+        if not (name.endswith(".weight") and name[: -len(".weight")] in quant_bases):
             out.append((name, param))  # attention/router/head/norms -> bf16 verbatim
             continue
         base = name[: -len(".weight")]
