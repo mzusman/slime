@@ -348,6 +348,11 @@ def update_weights_from_distributed(
 
     handles = []
     for _, param in converted_named_tensors:
+        # NCCL broadcast requires contiguous tensors; the on-the-fly fp8 quantize (block-quant
+        # reshape/slice) can yield non-contiguous exports. The IPC path tolerates it, NCCL
+        # doesn't ("ValueError: Tensors must be contiguous"). Backport of the corma-slime guard.
+        if not param.data.is_contiguous():
+            param.data = param.data.contiguous()
         handles.append(dist.broadcast(param.data, 0, group=group, async_op=True))
     for handle in handles:
         handle.wait()
