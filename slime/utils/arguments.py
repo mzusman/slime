@@ -340,6 +340,62 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
                     "and `status`."
                 ),
             )
+            # Fully-async rollout backpressure (AIMD dynamic in-flight group cap).
+            # Consumed by slime.rollout.fully_async_rollout; off by default.
+            parser.add_argument(
+                "--fully-async-dynamic-concurrency",
+                action="store_true",
+                default=False,
+                help="Enable AIMD dynamic concurrency for the fully-async rollout worker.",
+            )
+            parser.add_argument(
+                "--fully-async-concurrent-multiplier",
+                type=float,
+                default=None,
+                help="Fallback for --fully-async-concurrent-multiplier-max when that is unset.",
+            )
+            parser.add_argument(
+                "--fully-async-concurrent-multiplier-max",
+                type=float,
+                default=None,
+                help="Upper bound of the dynamic cap, as a multiple of rollout_batch_size (groups).",
+            )
+            parser.add_argument(
+                "--fully-async-concurrency-congestion-ratio",
+                type=float,
+                default=1.5,
+                help="Latency EWMA / baseline ratio above which the cap is multiplicatively decreased.",
+            )
+            parser.add_argument(
+                "--fully-async-concurrency-decrease-factor",
+                type=float,
+                default=0.7,
+                help="Multiplicative decrease factor applied to the cap on congestion.",
+            )
+            parser.add_argument(
+                "--fully-async-concurrency-increase-step",
+                type=int,
+                default=1,
+                help="Additive increase step (groups) applied to the cap while healthy.",
+            )
+            parser.add_argument(
+                "--fully-async-concurrency-control-interval-s",
+                type=float,
+                default=30.0,
+                help="Minimum seconds between AIMD adjustments.",
+            )
+            parser.add_argument(
+                "--fully-async-concurrency-min-samples",
+                type=int,
+                default=2,
+                help="Minimum group completions between AIMD adjustments.",
+            )
+            parser.add_argument(
+                "--fully-async-concurrency-baseline-relax",
+                type=float,
+                default=0.02,
+                help="Per-adjustment upward relaxation of the latency baseline.",
+            )
             parser.add_argument(
                 "--rollout-temperature",
                 type=float,
